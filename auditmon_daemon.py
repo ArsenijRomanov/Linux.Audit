@@ -439,6 +439,7 @@ class SyscallTracer(threading.Thread):
         self.attach_q = attach_queue
         self.ev_q = ev_queue
         self.traced: Dict[int, TraceState] = {}
+        self._pending_children: set[int] = set()
         self._attach_lock = threading.Lock()
 
     def _emit(self, et: str, pid: int, details: Dict[str, Any]) -> None:
@@ -446,6 +447,17 @@ class SyscallTracer(threading.Thread):
             self.ev_q.put_nowait(RawEvent(et, pid, details))
         except queue.Full:
             pass
+
+    def _init_traced_stopped(self, pid: int) -> None:
+        # child is already under ptrace (because of TRACEFORK/CLONE), and is currently stopped
+        if pid in self.traced:
+            return
+        try:
+            px.set_options(pid)
+            self.traced[pid] = TraceState(in_syscall=False)
+            px.syscall(pid, 0)  # resume without injecting SIGSTOP
+        except Exception:
+            self.traced.pop(pid, None)
 
     def _try_attach(self, pid: int) -> None:
         # already traced
@@ -635,7 +647,14 @@ class SyscallTracer(threading.Thread):
 
             sig = px.WSTOPSIG(status)
 
-            # Syscall stop
+            # 0) If this is a freshly-created child (TRACEFORK/CLONE), it will be stopped (often with SIGSTOP).
+            #    Initialize it and resume WITHOUT reinjecting SIGSTOP.
+            if pid in self._pending_children and pid not in self.traced:
+                self._pending_children.discard(pid)
+                self._init_traced_stopped(pid)
+                continue
+
+            # 1) Syscall stop (TRACESYSGOOD): SIGTRAP|0x80
             if sig == (px.SIGTRAP | 0x80):
                 st = self.traced.get(pid)
                 if not st:
@@ -655,6 +674,28 @@ class SyscallTracer(threading.Thread):
                     self.traced.pop(pid, None)
                 continue
 
+            # 2) Ptrace event stop: SIGTRAP with event code in status>>16
+            if sig == px.SIGTRAP:
+                event = (status >> 16) & 0xffff
+
+                if event in (px.PTRACE_EVENT_FORK, px.PTRACE_EVENT_VFORK, px.PTRACE_EVENT_CLONE):
+                    try:
+                        child_pid = px.get_eventmsg(pid)
+                        if child_pid > 0:
+                            self._pending_children.add(child_pid)
+                            # (optional) log fork/clone event
+                            # self._emit("PROCESS_FORK", pid, {"child_pid": child_pid, "event": int(event)})
+                    except Exception:
+                        pass
+
+                # IMPORTANT: do NOT inject SIGTRAP into tracee; resume with 0
+                try:
+                    px.syscall(pid, 0)
+                except Exception:
+                    self.traced.pop(pid, None)
+                continue
+
+            # 3) Other signals: pass them through as before
             try:
                 px.syscall(pid, sig)
             except Exception:

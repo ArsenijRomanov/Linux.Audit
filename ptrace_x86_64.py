@@ -35,8 +35,18 @@ PTRACE_GETEVENTMSG = 0x4201
 
 # ptrace options
 PTRACE_O_TRACESYSGOOD = 0x00000001
+PTRACE_O_TRACEFORK    = 0x00000002
+PTRACE_O_TRACEVFORK   = 0x00000004
+PTRACE_O_TRACECLONE   = 0x00000008
 PTRACE_O_TRACEEXEC    = 0x00000010
 PTRACE_O_TRACEEXIT    = 0x00000040
+
+# ptrace event ids (encoded in waitpid status >> 16)
+PTRACE_EVENT_FORK  = 1
+PTRACE_EVENT_VFORK = 2
+PTRACE_EVENT_CLONE = 3
+PTRACE_EVENT_EXEC  = 4
+PTRACE_EVENT_EXIT  = 6
 
 # waitpid flags
 __WALL = 0x40000000  # wait for all children, including traced
@@ -167,8 +177,20 @@ def detach(pid: int) -> None:
 
 # ставит ключевые опции ptrace через PTRACE_SETOPTIONS
 def set_options(pid: int) -> None:
-    opts = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT
+    opts = (
+        PTRACE_O_TRACESYSGOOD
+        | PTRACE_O_TRACEEXEC
+        | PTRACE_O_TRACEEXIT
+        | PTRACE_O_TRACEFORK
+        | PTRACE_O_TRACEVFORK
+        | PTRACE_O_TRACECLONE
+    )
     ptrace(PTRACE_SETOPTIONS, pid, 0, opts)
+
+def get_eventmsg(pid: int) -> int:
+    msg = ctypes.c_ulonglong()
+    ptrace(PTRACE_GETEVENTMSG, pid, 0, ctypes.addressof(msg))
+    return int(msg.value)
 
 # PTRACE_SYSCALL — продолжает процесс, но останавливает его на входе и выходе каждого syscall
 def syscall(pid: int, sig: int = 0) -> None:
