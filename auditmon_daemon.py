@@ -414,9 +414,9 @@ class ProcScanner(threading.Thread):
                 if (not cmd) and comm.startswith("[") and comm.endswith("]"):
                     self.known.add(pid)
                     continue
-                self.known.add(pid)
                 try:
                     self.out.put_nowait(pid)
+                    self.known.add(pid)
                 except queue.Full:
                     pass
             time.sleep(self.interval)
