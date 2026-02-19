@@ -744,7 +744,17 @@ class App(tk.Tk):
         txt.pack(fill="both", expand=True)
 
         obj = dict(row)
-        obj["details_json"] = _json_pretty(obj.get("details_json") or "{}")
+
+        # details_json хранится как строка JSON -> превращаем в dict для красивого вывода
+        raw_details = obj.get("details_json") or "{}"
+        try:
+            obj["details"] = json.loads(raw_details)  # вложенный объект
+            obj.pop("details_json", None)  # убираем строковую версию, чтобы не было \n
+        except Exception:
+            # если вдруг там невалидный JSON — оставим как есть, но без краша
+            obj["details"] = raw_details
+            obj.pop("details_json", None)
+
         txt.insert("1.0", json.dumps(obj, ensure_ascii=False, indent=2))
         txt.configure(state="disabled")
 
@@ -930,7 +940,7 @@ class App(tk.Tk):
         frm.rowconfigure(0, weight=1)
         frm.rowconfigure(1, weight=1)
 
-        box1 = ttk.LabelFrame(frm, text="Наблюдаемые пути (inotify)", padding=8)
+        box1 = ttk.LabelFrame(frm, text="Наблюдаемые пути", padding=8)
         box1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         box1.rowconfigure(0, weight=1)
         box1.columnconfigure(0, weight=1)
@@ -945,7 +955,7 @@ class App(tk.Tk):
         ttk.Button(box1, text="Удалить", command=self._del_path).grid(row=1, column=1, sticky="e", padx=4, pady=(0, 4))
 
         self.var_hash_paths = tk.BooleanVar(value=bool((self.cfg.get("privacy") or {}).get("hash_paths")))
-        ttk.Checkbutton(frm, text="Хэшировать пути (конфиденциальность)", variable=self.var_hash_paths).grid(
+        ttk.Checkbutton(frm, text="Хэшировать пути", variable=self.var_hash_paths).grid(
             row=2, column=0, sticky="w", pady=(8, 0)
         )
 
